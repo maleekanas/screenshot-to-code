@@ -32,6 +32,18 @@ info "Installing Playwright Chromium (optional screenshot preview tool)"
 "$POETRY" -C backend run playwright install chromium || \
   echo "Skipping Chromium install; screenshot preview will be disabled."
 
+# Chromium needs shared system libraries (libnspr4, libnss3, ...) that minimal
+# images often lack. Playwright's install-deps only supports apt, so handle dnf too.
+if command -v apt-get >/dev/null 2>&1; then
+  sudo -n "$("$POETRY" -C backend env info -e)" -m playwright install-deps chromium 2>/dev/null || \
+    echo "Could not install Chromium system libraries; run: sudo playwright install-deps chromium"
+elif command -v dnf >/dev/null 2>&1; then
+  sudo -n dnf install -y -q nss nspr atk at-spi2-atk cups-libs libdrm libxkbcommon \
+    libXcomposite libXdamage libXfixes libXrandr mesa-libgbm pango cairo alsa-lib \
+    libXext libX11 libxcb >/dev/null 2>&1 || \
+    echo "Could not install Chromium system libraries via dnf; screenshot preview may fail."
+fi
+
 if ! command -v pnpm >/dev/null 2>&1; then
   info "Enabling pnpm via corepack"
   corepack enable
