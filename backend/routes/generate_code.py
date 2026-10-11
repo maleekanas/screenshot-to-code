@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 import traceback
 from typing import Callable, Awaitable
 from fastapi import APIRouter, WebSocket
+import anthropic
 import openai
 from starlette.websockets import WebSocketDisconnect
 from websockets.exceptions import ConnectionClosedOK, ConnectionClosedError
@@ -703,6 +704,33 @@ class AgenticGenerationStage:
                     if IS_PROD
                     else ""
                 )
+            )
+            await self.send_message("variantError", error_message, index, None, None)
+            return ""
+        except anthropic.AuthenticationError as e:
+            print(f"[VARIANT {index + 1}] Anthropic Authentication failed", e)
+            error_message = (
+                "Incorrect Anthropic key. Please check your Anthropic API key in Settings, "
+                "or create a new one at https://console.anthropic.com/settings/keys."
+            )
+            await self.send_message("variantError", error_message, index, None, None)
+            return ""
+        except anthropic.BadRequestError as e:
+            if "credit balance" not in str(e).lower():
+                raise
+            print(f"[VARIANT {index + 1}] Anthropic credit balance too low", e)
+            error_message = (
+                "Your Anthropic account is out of credits. Add credits at "
+                "https://console.anthropic.com/settings/billing, or switch to an "
+                "OpenAI or Gemini key in Settings."
+            )
+            await self.send_message("variantError", error_message, index, None, None)
+            return ""
+        except anthropic.RateLimitError as e:
+            print(f"[VARIANT {index + 1}] Anthropic Rate limit exceeded", e)
+            error_message = (
+                "Anthropic rate limit reached. Wait a moment and try again, "
+                "or check your usage limits at https://console.anthropic.com."
             )
             await self.send_message("variantError", error_message, index, None, None)
             return ""
