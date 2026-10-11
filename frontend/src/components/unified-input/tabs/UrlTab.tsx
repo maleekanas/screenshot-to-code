@@ -75,7 +75,19 @@ function UrlTab({
 
       const res = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(res?.detail || "Failed to capture screenshot");
+        const detail = typeof res?.detail === "string" ? res.detail : null;
+        if (detail) throw new Error(detail);
+        if (response.status === 502 || response.status === 504) {
+          throw new Error(
+            "The screenshot request timed out. Try again, or upload a screenshot in the Upload tab.",
+          );
+        }
+        throw new Error(
+          `Failed to capture screenshot (HTTP ${response.status}). You can also upload a screenshot in the Upload tab.`,
+        );
+      }
+      if (typeof res?.url !== "string") {
+        throw new Error("The backend returned an unexpected response.");
       }
 
       doCreate(
