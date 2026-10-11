@@ -13,6 +13,10 @@ from preview_screenshot.registry import get_url_screenshot_backend
 
 router = APIRouter()
 
+# Kept under typical preview/edge proxy timeouts so the client always gets a
+# JSON error instead of a proxy's HTML error page.
+LOCAL_CAPTURE_TIMEOUT_S = 25
+
 
 def normalize_url(url: str) -> str:
     """
@@ -141,19 +145,31 @@ async def app_screenshot(request: ScreenshotRequest):
 
     try:
         normalized_url = normalize_url(url)
-
-        if api_key:
-            image_bytes = await capture_screenshot(normalized_url, api_key=api_key)
-        else:
-            image_bytes = await capture_screenshot_locally(normalized_url)
-
-        # Convert the image bytes to a data url
-        data_url = bytes_to_data_url(image_bytes, "image/png")
-
-        return ScreenshotResponse(url=data_url)
     except ValueError as e:
-        # Handle URL normalization errors
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
+
+    try:
+        image_bytes: Optional[bytes] = None
+        if api_key:
+            try:
+                image_bytes = await capture_screenshot(normalized_url, api_key=api_key)
+            except Exception as e:
+                # A bad or out-of-credit ScreenshotOne key shouldn't block
+                # capture when local Chromium can do the job.
+                print(f"[screenshot] ScreenshotOne failed, using local Chromium: {e}")
+        if image_bytes is None:
+            image_bytes = await asyncio.wait_for(
+                capture_screenshot_locally(normalized_url),
+                timeout=LOCAL_CAPTURE_TIMEOUT_S,
+            )
+
+        return ScreenshotResponse(url=bytes_to_data_url(image_bytes, "image/png"))
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=504,
+            detail="The page took too long to capture. Try again or upload a screenshot instead.",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Handle other errors
         raise HTTPException(status_code=500, detail=f"Error capturing screenshot: {str(e)}")

@@ -3,6 +3,7 @@ from typing import Awaitable, Callable, Optional
 
 from playwright.async_api import (
     Browser,
+    Error as PlaywrightError,
     Playwright,
     Route,
     TimeoutError as PlaywrightTimeoutError,
@@ -12,8 +13,19 @@ from playwright.async_api import (
 from preview_screenshot.base import VIEWPORT_SIZES
 
 PAGE_LOAD_TIMEOUT_MS = 15000
-URL_LOAD_TIMEOUT_MS = 30000
-RENDER_SETTLE_MS = 250
+URL_LOAD_TIMEOUT_MS = 15000
+NETWORK_IDLE_TIMEOUT_MS = 4000
+SCREENSHOT_TIMEOUT_MS = 10000
+RENDER_SETTLE_MS = 500
+
+
+def _short_navigation_error(exc: Exception) -> str:
+    """Reduce Playwright's multi-line error to e.g. 'net::ERR_NAME_NOT_RESOLVED'."""
+    first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else ""
+    for token in first_line.split():
+        if token.startswith("net::"):
+            return token
+    return first_line[:120] or "navigation failed"
 
 
 class PlaywrightBackend:
@@ -127,16 +139,34 @@ class PlaywrightBackend:
             page = await context.new_page()
             try:
                 await page.goto(
-                    url, wait_until="networkidle", timeout=URL_LOAD_TIMEOUT_MS
+                    url, wait_until="domcontentloaded", timeout=URL_LOAD_TIMEOUT_MS
                 )
             except PlaywrightTimeoutError:
-                # Pages that never go network-idle still have usable content.
+                raise RuntimeError(
+                    "The page took too long to respond. Try again or upload a screenshot instead."
+                )
+            except PlaywrightError as exc:
+                raise RuntimeError(
+                    f"Could not open the page ({_short_navigation_error(exc)})."
+                )
+            # Give scripts and images a short, bounded chance to settle. Sites
+            # with analytics/polling never go network-idle, so don't wait on it
+            # for long — slow captures get cut off by preview/edge proxies.
+            try:
+                await page.wait_for_load_state(
+                    "networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS
+                )
+            except PlaywrightTimeoutError:
                 pass
             try:
-                await page.evaluate("document.fonts.ready")
+                await asyncio.wait_for(
+                    page.evaluate("document.fonts.ready"), timeout=2
+                )
             except Exception:
                 pass
             await page.wait_for_timeout(RENDER_SETTLE_MS)
-            return await page.screenshot(full_page=full_page, type="png")
+            return await page.screenshot(
+                full_page=full_page, type="png", timeout=SCREENSHOT_TIMEOUT_MS
+            )
         finally:
             await context.close()
