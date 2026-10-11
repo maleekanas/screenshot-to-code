@@ -49,3 +49,20 @@ async def capture_preview_screenshot(
     pages (old and new) actually mount before we capture.
     """
     return await _backend.capture(normalize_babel_cdn(html), device, full_page)
+
+
+_url_backend: Optional[PlaywrightBackend] = None
+
+
+def get_url_screenshot_backend() -> PlaywrightBackend:
+    """Local Chromium used to screenshot live URLs.
+
+    Reuses the active preview backend's browser when it is Playwright-based;
+    otherwise lazily creates a dedicated one.
+    """
+    global _url_backend
+    if isinstance(_backend, PlaywrightBackend):
+        return _backend
+    if _url_backend is None:
+        _url_backend = PlaywrightBackend()
+    return _url_backend
