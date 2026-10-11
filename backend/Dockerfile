@@ -1,24 +1,28 @@
 FROM python:3.12.3-slim-bookworm
 
-ENV POETRY_VERSION 1.8.0
+# poetry.lock uses lock-version 2.1, which requires Poetry 2.x.
+ENV POETRY_VERSION=2.1.3 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_NO_INTERACTION=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=7001 \
+    LOCAL_ASSET_DIR=/app/local_assets
 
-# Install system dependencies
-RUN pip install "poetry==$POETRY_VERSION"
+RUN pip install --no-cache-dir "poetry==$POETRY_VERSION"
 
-# Set work directory
 WORKDIR /app
 
-# Copy only requirements to cache them in docker layer
+# Copy only dependency manifests first to cache the install layer.
 COPY poetry.lock pyproject.toml /app/
+RUN poetry install --without dev --no-root
 
-# Disable the creation of virtual environments
-RUN poetry config virtualenvs.create false
-
-# Install dependencies
-RUN poetry install
-
-# Install Chromium and Linux libraries needed by Playwright screenshot previews.
+# Chromium + Linux libraries needed by the Playwright screenshot preview tool.
 RUN playwright install --with-deps chromium
 
-# Copy the current directory contents into the container at /app
 COPY ./ /app/
+RUN mkdir -p "$LOCAL_ASSET_DIR"
+
+EXPOSE 7001
+
+# Hosting platforms (Render, Railway, Fly, Cloud Run) inject $PORT.
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-7001} --proxy-headers --forwarded-allow-ips='*'"]

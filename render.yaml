@@ -1,0 +1,19 @@
+# Render Blueprint for the FastAPI backend (needs long-lived WebSockets,
+# which Vercel Functions don't support). Deploy via Render > New > Blueprint.
+services:
+  - type: web
+    name: screenshot-to-code-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: REPLICATE_API_KEY
+        sync: false
