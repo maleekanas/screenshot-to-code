@@ -7,13 +7,18 @@ import {
 } from "../lib/design-systems";
 import { DesignSystem } from "../types";
 
-const INITIAL_LOAD_RETRY_DELAYS_MS = [500, 1000, 2000, 3000, 5000, 8000];
+// ~60s total: covers a cold backend boot (slow imports + reload) after the
+// dev server restarts.
+const INITIAL_LOAD_RETRY_DELAYS_MS = [
+  500, 1000, 2000, 3000, 5000, 8000, 10000, 15000, 15000,
+];
 
 export function useDesignSystems(
   client: DesignSystemsClient = defaultDesignSystemsClient
 ) {
   const [designSystems, setDesignSystems] = useState<DesignSystem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const loadDesignSystems = useCallback(
     async (retryDelaysMs: number[], isCancelled: () => boolean = () => false) => {
@@ -21,14 +26,24 @@ export function useDesignSystems(
       for (let attempt = 0; ; attempt++) {
         try {
           const result = await client.fetchDesignSystems();
-          if (!isCancelled()) setDesignSystems(result);
+          if (!isCancelled()) {
+            setDesignSystems(result);
+            setLoadFailed(false);
+          }
           break;
         } catch (error) {
           if (isCancelled()) break;
           const delay = retryDelaysMs[attempt];
           if (delay === undefined) {
             console.error("Failed to load design systems", error);
-            toast.error("Could not load design systems from the backend.");
+            setLoadFailed((alreadyFailed) => {
+              if (!alreadyFailed) {
+                toast.error("Could not load design systems from the backend.", {
+                  id: "design-systems-load-error",
+                });
+              }
+              return true;
+            });
             break;
           }
           await new Promise((resolve) => setTimeout(resolve, delay));
@@ -54,6 +69,19 @@ export function useDesignSystems(
       cancelled = true;
     };
   }, [loadDesignSystems]);
+
+  useEffect(() => {
+    if (!loadFailed) return;
+    const retryWhenVisible = () => {
+      if (document.visibilityState === "visible") loadDesignSystems([]);
+    };
+    window.addEventListener("focus", retryWhenVisible);
+    document.addEventListener("visibilitychange", retryWhenVisible);
+    return () => {
+      window.removeEventListener("focus", retryWhenVisible);
+      document.removeEventListener("visibilitychange", retryWhenVisible);
+    };
+  }, [loadFailed, loadDesignSystems]);
 
   const create = useCallback(
     async (payload: DesignSystemPayload) => {

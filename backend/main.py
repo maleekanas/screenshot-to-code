@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+import asyncio
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import IS_DEBUG_ENABLED
@@ -22,6 +24,9 @@ from routes import (
 from uploaded_assets import configure_uploaded_asset_routes
 
 app = FastAPI(openapi_url=None, docs_url=None, redoc_url=None)
+
+# Keep references so background startup tasks aren't garbage-collected.
+_background_tasks: set[asyncio.Task[bool]] = set()
 configure_uploaded_asset_routes(app)
 
 
@@ -34,10 +39,12 @@ async def log_debug_mode() -> None:
 @app.on_event("startup")
 async def probe_screenshot_preview_on_startup() -> None:
     # Detect (and warm up) headless Chromium so the screenshot_preview tool is
-    # only offered when it can actually run. Logs the outcome.
+    # only offered when it can actually run. Logs the outcome. Runs in the
+    # background so launching Chromium doesn't delay the server accepting
+    # requests; /api/capabilities awaits the probe itself when needed.
     from preview_screenshot import probe_screenshot_preview
 
-    await probe_screenshot_preview()
+    _background_tasks.add(asyncio.create_task(probe_screenshot_preview()))
 
 # Configure CORS settings
 app.add_middleware(
