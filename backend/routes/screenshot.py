@@ -1,8 +1,15 @@
+import asyncio
 import base64
+import ipaddress
+import os
+import socket
+from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import httpx
 from urllib.parse import urlparse
+
+from preview_screenshot.registry import get_url_screenshot_backend
 
 router = APIRouter()
 
@@ -73,9 +80,52 @@ async def capture_screenshot(
             raise Exception("Error taking screenshot")
 
 
+def _is_public_ip(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return ip.is_global and not ip.is_multicast
+
+
+async def is_public_http_url(url: str) -> bool:
+    """True only for http(s) URLs whose host resolves exclusively to public IPs.
+
+    Keeps the local browser from being used to reach localhost, cloud metadata
+    endpoints, or other private-network services (SSRF).
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    host = parsed.hostname
+    if _is_public_ip(host):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    try:
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError):
+        return False
+    addresses = {str(info[4][0]) for info in infos}
+    return bool(addresses) and all(_is_public_ip(a) for a in addresses)
+
+
+async def capture_screenshot_locally(target_url: str, device: str = "desktop") -> bytes:
+    if not await is_public_http_url(target_url):
+        raise ValueError("Only publicly reachable http(s) URLs can be captured.")
+    backend = get_url_screenshot_backend()
+    return await backend.capture_url(
+        target_url, device=device, is_url_allowed=is_public_http_url
+    )
+
+
 class ScreenshotRequest(BaseModel):
     url: str
-    apiKey: str
+    apiKey: Optional[str] = None
 
 
 class ScreenshotResponse(BaseModel):
@@ -84,16 +134,18 @@ class ScreenshotResponse(BaseModel):
 
 @router.post("/api/screenshot")
 async def app_screenshot(request: ScreenshotRequest):
-    # Extract the URL from the request body
     url = request.url
-    api_key = request.apiKey
+    api_key = (request.apiKey or "").strip() or os.environ.get(
+        "SCREENSHOTONE_API_KEY", ""
+    ).strip()
 
     try:
-        # Normalize the URL
         normalized_url = normalize_url(url)
-        
-        # Capture screenshot with normalized URL
-        image_bytes = await capture_screenshot(normalized_url, api_key=api_key)
+
+        if api_key:
+            image_bytes = await capture_screenshot(normalized_url, api_key=api_key)
+        else:
+            image_bytes = await capture_screenshot_locally(normalized_url)
 
         # Convert the image bytes to a data url
         data_url = bytes_to_data_url(image_bytes, "image/png")

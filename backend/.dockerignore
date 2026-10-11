@@ -1,0 +1,10 @@
+.env
+.venv
+__pycache__
+**/__pycache__
+.pytest_cache
+local_assets
+run_logs
+evals_data
+image_generation/eval_sets
+image_generation/eval_results

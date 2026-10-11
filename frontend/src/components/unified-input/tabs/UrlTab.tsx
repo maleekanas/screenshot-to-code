@@ -40,14 +40,6 @@ function UrlTab({
   async function takeScreenshot() {
     const trimmedReferenceUrl = referenceUrl.trim();
 
-    if (!screenshotOneApiKey) {
-      toast.error(
-        "Please add a ScreenshotOne API key in Settings. You can also upload screenshots directly in the Upload tab.",
-        { duration: 6000 },
-      );
-      return;
-    }
-
     if (!trimmedReferenceUrl) {
       toast.error("Please enter a URL");
       return;
@@ -74,18 +66,18 @@ function UrlTab({
         method: "POST",
         body: JSON.stringify({
           url: trimmedReferenceUrl,
-          apiKey: screenshotOneApiKey,
+          apiKey: screenshotOneApiKey || undefined,
         }),
         headers: {
           "Content-Type": "application/json",
         },
       });
 
+      const res = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error("Failed to capture screenshot");
+        throw new Error(res?.detail || "Failed to capture screenshot");
       }
 
-      const res = await response.json();
       doCreate(
         [res.url],
         "image",
@@ -94,7 +86,12 @@ function UrlTab({
       );
     } catch (error) {
       console.error(error);
-      toast.error("Failed to capture screenshot. Check console for details.");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to capture screenshot. Check console for details.",
+        { duration: 6000 },
+      );
     } finally {
       setIsLoading(false);
     }
@@ -157,7 +154,8 @@ function UrlTab({
             </p>
           ) : (
             <p className="text-[11px] text-gray-400 dark:text-zinc-500">
-              Requires a ScreenshotOne API key in Settings.
+              Captured with the built-in browser. Add a ScreenshotOne API key
+              in Settings for ad and cookie-banner blocking.
             </p>
           )}
         </div>

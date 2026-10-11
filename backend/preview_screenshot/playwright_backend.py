@@ -1,9 +1,10 @@
 import asyncio
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 from playwright.async_api import (
     Browser,
     Playwright,
+    Route,
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
@@ -11,6 +12,7 @@ from playwright.async_api import (
 from preview_screenshot.base import VIEWPORT_SIZES
 
 PAGE_LOAD_TIMEOUT_MS = 15000
+URL_LOAD_TIMEOUT_MS = 30000
 RENDER_SETTLE_MS = 250
 
 
@@ -88,3 +90,53 @@ class PlaywrightBackend:
             return await page.screenshot(full_page=full_page, type="png")
         finally:
             await page.close()
+
+    async def capture_url(
+        self,
+        url: str,
+        device: str = "desktop",
+        full_page: bool = True,
+        is_url_allowed: Optional[Callable[[str], Awaitable[bool]]] = None,
+    ) -> bytes:
+        """Navigate to a live URL and screenshot it.
+
+        ``is_url_allowed`` is checked for every top-level navigation (including
+        redirects) so callers can keep the browser off internal addresses.
+        """
+        browser = await self._get_browser()
+        width, height = VIEWPORT_SIZES.get(device, VIEWPORT_SIZES["desktop"])
+        context = await browser.new_context(
+            viewport={"width": width, "height": height},
+            device_scale_factor=1,
+        )
+        try:
+            if is_url_allowed is not None:
+                check = is_url_allowed
+
+                async def guard(route: Route) -> None:
+                    request = route.request
+                    if request.is_navigation_request() and not await check(
+                        request.url
+                    ):
+                        await route.abort("blockedbyclient")
+                    else:
+                        await route.continue_()
+
+                await context.route("**/*", guard)
+
+            page = await context.new_page()
+            try:
+                await page.goto(
+                    url, wait_until="networkidle", timeout=URL_LOAD_TIMEOUT_MS
+                )
+            except PlaywrightTimeoutError:
+                # Pages that never go network-idle still have usable content.
+                pass
+            try:
+                await page.evaluate("document.fonts.ready")
+            except Exception:
+                pass
+            await page.wait_for_timeout(RENDER_SETTLE_MS)
+            return await page.screenshot(full_page=full_page, type="png")
+        finally:
+            await context.close()
