@@ -18,9 +18,5 @@
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down"
   },
-  "workspaces": [
-    "frontend",
-    "backend"
-  ],
   "packageManager": "pnpm@10.32.1"
 }
