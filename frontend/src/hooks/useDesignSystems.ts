@@ -7,27 +7,53 @@ import {
 } from "../lib/design-systems";
 import { DesignSystem } from "../types";
 
+const INITIAL_LOAD_RETRY_DELAYS_MS = [500, 1000, 2000, 3000, 5000, 8000];
+
 export function useDesignSystems(
   client: DesignSystemsClient = defaultDesignSystemsClient
 ) {
   const [designSystems, setDesignSystems] = useState<DesignSystem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const refreshDesignSystems = useCallback(async () => {
-    try {
+  const loadDesignSystems = useCallback(
+    async (retryDelaysMs: number[], isCancelled: () => boolean = () => false) => {
       setIsLoading(true);
-      setDesignSystems(await client.fetchDesignSystems());
-    } catch (error) {
-      console.error("Failed to load design systems", error);
-      toast.error("Could not load design systems from the backend.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [client]);
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const result = await client.fetchDesignSystems();
+          if (!isCancelled()) setDesignSystems(result);
+          break;
+        } catch (error) {
+          if (isCancelled()) break;
+          const delay = retryDelaysMs[attempt];
+          if (delay === undefined) {
+            console.error("Failed to load design systems", error);
+            toast.error("Could not load design systems from the backend.");
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, delay));
+          if (isCancelled()) break;
+        }
+      }
+      if (!isCancelled()) setIsLoading(false);
+    },
+    [client]
+  );
+
+  const refreshDesignSystems = useCallback(
+    () => loadDesignSystems([]),
+    [loadDesignSystems]
+  );
 
   useEffect(() => {
-    refreshDesignSystems();
-  }, [refreshDesignSystems]);
+    let cancelled = false;
+    // The backend can take several seconds to boot after the dev server
+    // (re)starts, so retry the initial load before reporting a failure.
+    loadDesignSystems(INITIAL_LOAD_RETRY_DELAYS_MS, () => cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadDesignSystems]);
 
   const create = useCallback(
     async (payload: DesignSystemPayload) => {
